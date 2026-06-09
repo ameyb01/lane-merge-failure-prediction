@@ -4,7 +4,7 @@ env:
   world:
     carla_port: 2000
     town: "Town04" # which town map to use
-    actor_active_distance: 100
+    actor_active_distance: 300
     fixed_delta_seconds: 0.1
     auto_lane_change: True
     traffic:
@@ -55,6 +55,15 @@ env:
       fov: 90
       sensor_tick: 0.1
       pitch: -90
+
+    closure_camera:
+      handler: closure_camera
+      key: closure_camera
+      shape: [128, 128, 3]
+      height: 5.0
+      pitch: -10
+      fov: 90
+      sensor_tick: 0.0
 
     # BEV with only roadmap, vehicles, and waypoints
     birdeye_raw:

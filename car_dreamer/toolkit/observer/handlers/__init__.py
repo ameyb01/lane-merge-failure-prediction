@@ -4,3 +4,4 @@ from .message_handler import MessageHandler
 from .sensor_handlers import CameraHandler, CollisionHandler, LidarHandler
 from .simple_handler import SimpleHandler
 from .spectator_handler import SpectatorHandler
+from .closure_camera_handler import ClosureCameraHandler

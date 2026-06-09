@@ -1,6 +1,6 @@
 from enum import Enum
 
-from .handlers import BirdeyeHandler, CameraHandler, CollisionHandler, LidarHandler, MessageHandler, SpectatorHandler
+from .handlers import BirdeyeHandler, CameraHandler, CollisionHandler, LidarHandler, MessageHandler, SpectatorHandler, ClosureCameraHandler
 
 
 class HandlerType(Enum):
@@ -12,6 +12,7 @@ class HandlerType(Enum):
     BIRDEYE = "birdeye"
     MESSAGE = "message"
     SPECTATOR = "spectator"
+    CLOSURE_CAMERA = "closure_camera"
 
 
 HANDLER_DICT = {
@@ -21,4 +22,5 @@ HANDLER_DICT = {
     HandlerType.LIDAR: LidarHandler,
     HandlerType.COLLISION: CollisionHandler,
     HandlerType.SPECTATOR: SpectatorHandler,
+    HandlerType.CLOSURE_CAMERA: ClosureCameraHandler,
 }

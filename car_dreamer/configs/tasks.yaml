@@ -95,7 +95,6 @@ carla_overtake:
           early_lane_change: 0.0,
           destination_reached: 20.0,
         }
-    terminal:
       out_lane_thres: 5 # threshold for out of lane
       time_limit: 500 # maximum timesteps per episode
       left_lane_boundry: 3.7 # out of lane boundry
@@ -259,7 +258,8 @@ carla_lane_merge:
     name: CarlaLaneMergeEnv-v0
     observation.enabled: [camera, collision, birdeye_wpt]
     <<: *carla_wpt
-    reward.desired_speed: 6 # desired speed (m/s)
+    reward.desired_speed: 6
+    terminal.time_limit: 1000 # desired speed (m/s)
     lane_start_point: [49.4, 141.4, 0.5, -155.0]
     ego_path: [[49.4, 141.4, 0.5], [15.4, 56.0, 0.1]]
     use_road_waypoints: [True, False]
@@ -297,7 +297,6 @@ carla_traffic_lights:
         time: 0.0
         destination_reached: 20.0
         traffic_light_violate: 100.0
-    terminal:
       time_limit: 500 # maximum timesteps per episode
       out_lane_thres: 3 # threshold for out of lane
 
@@ -355,7 +354,6 @@ carla_stop_sign:
         traffic_light_violate: 100.0
         stop_sign: 5.0
         speed_before_stop: 1.0
-    terminal:
       time_limit: 500 # maximum timesteps per episode
       out_lane_thres: 3 # threshold for out of lane
 
@@ -404,7 +402,6 @@ carla_follow:
         distance: 2.0
       }
 
-    terminal:
       time_limit: 500 # maximum timesteps per episode
       out_lane_thres: 5 # threshold for out of lane
       terminal_dist: 30
@@ -438,3 +435,211 @@ carla_follow:
     decoder.cnn_keys: "birdeye_wpt"
     decoder.cnn_kernels: [5, 5, 5, 6, 6]
     train.log_keys_video: [birdeye_wpt]
+
+carla_overtake_static:
+  env:
+    name: CarlaOvertakeStaticEnv-v0
+    observation.enabled: [camera, collision, birdeye_wpt]
+    nonego_spawn_y_range: [70.0, 85.0]  # random y in this range, fixed x=5.8 (leftmost lane)
+    lane_start_points:
+      - [5.8, 100, 0.1]
+    lane_end_points:
+      - [5.8, 0.0, 0.1]
+    reward:
+      desired_speed: 3
+      reward_overtake_dist: 12   # increased from 8 — wider clearance for Cybertruck
+      early_lane_change_dist: 20 # increased from 10 — start merging earlier
+      lane_width: 3.4
+      scales:
+        {
+          waypoint: 2.0,
+          speed: 0.5,
+          stay_same_lane: 0.3,
+          out_of_lane: 3.0,
+          collision: 30.0,
+          time: 0.0,
+          exceeding: 200.0,
+          overtake: 200.0,
+          early_lane_change: 0.0,
+          destination_reached: 20.0,
+          steer_smooth: 0.3,
+        }
+    terminal:
+      out_lane_thres: 7          # increased from 5 — more room to maneuver
+      time_limit: 500
+      left_lane_boundry: 2.0     # wider from 3.7 — more room on left
+      right_lane_boundry: 20.0   # wider from 17.7 — more room on right
+      lane_width: 3.4
+      terminal_dist: 100
+    display:
+      render_keys: [camera, birdeye_wpt]
+
+  dreamerv3:
+    encoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_keys: "birdeye_wpt"
+    run.log_keys_video: [camera, birdeye_wpt]
+
+  dreamerv2:
+    encoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_kernels: [5, 5, 5, 6, 6]
+    train.log_keys_video: [camera, birdeye_wpt]
+
+carla_workzone_merge:
+  env:
+    world:
+      town: Town04
+
+    name: CarlaWorkzoneMergeEnv-v0
+    observation.enabled: [camera, collision, birdeye_wpt]
+
+    num_vehicles: 0
+
+    <<: *carla_wpt
+
+    # Cybertruck spawns randomly in lane -1 (x=5.24) between y=50 and y=80
+    # Ego always starts at y=130 — 50-80 units behind truck
+    nonego_spawn_y_range: [50.0, 80.0]
+    lane_start_points:
+      - [5.24, 130, 0.1]
+    lane_end_points:
+      - [5.24, -20.0, 0.1]
+
+    # --- Reward ---
+    reward.desired_speed: 3
+    reward.early_lane_change_dist: 20   # merge window starts 20 units before truck
+    reward.lane_width: 3.5              # confirmed: 8.74 - 5.24 = 3.5
+
+    reward.scales.waypoint: 2.0
+    reward.scales.speed: 0.5
+    reward.scales.collision: 30.0
+    reward.scales.out_of_lane: 0.0
+    reward.scales.time: 0.0
+    reward.scales.destination_reached: 20.0
+    reward.scales.stay_same_lane: 2.0
+    reward.scales.early_lane_change: 5.0
+    reward.scales.r_merge: 200.0
+    reward.scales.steer_smooth: 0.3
+
+    # --- Terminal ---
+    terminal.time_limit: 500
+    terminal.out_lane_thres: 5
+    terminal.left_lane_boundry: 4.5
+    terminal.right_lane_boundry: 20.0
+    terminal.lane_width: 3.5
+
+    display:
+      render_keys: [camera, birdeye_wpt]
+
+  dreamerv3:
+    encoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_keys: "birdeye_wpt"
+    run.log_keys_video: [camera, birdeye_wpt]
+    run.log_keys_max: "success|is_collision|time_exceeded"
+
+  dreamerv2:
+    encoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_kernels: [5, 5, 5, 6, 6]
+    train.log_keys_video: [camera, birdeye_wpt]
+
+carla_workzone_merge_interactive:
+  env:
+    world:
+      town: Town04
+    name: CarlaWorkzoneMergeInteractiveEnv-v0
+    observation.enabled: [camera, collision, birdeye_wpt, closure_camera]
+    num_vehicles: 0
+    <<: *carla_wpt
+
+    nonego_spawn_y_range: [50.0, 80.0]
+    lane_start_points:
+      - [5.24, 130, 0.1]
+    lane_end_points:
+      - [5.24, -20.0, 0.1]
+
+    reward:
+      desired_speed: 4
+      early_lane_change_dist: 12
+      lane_width: 3.5
+      scales:
+        {
+          waypoint: 2.0,
+          speed: 0.5,
+          collision: 30.0,
+          out_of_lane: 0.0,
+          time: 0.0,
+          destination_reached: 0.0,
+          stay_same_lane: 2.0,
+          early_lane_change: 5.0,
+          r_merge: 200.0,
+          steer_smooth: 0.3,
+        }
+
+    terminal:
+      time_limit: 500
+      out_lane_thres: 5
+      left_lane_boundry: 4.5
+      right_lane_boundry: 20.0
+
+  dreamerv3:
+    encoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_keys: "birdeye_wpt"
+    run.log_keys_video: [camera, birdeye_wpt, closure_camera]
+    run.log_keys_max: "success|is_collision|time_exceeded|out_of_lane"
+
+  dreamerv2:
+    encoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_kernels: [5, 5, 5, 6, 6]
+    train.log_keys_video: [camera, birdeye_wpt]
+
+carla_workzone_merge_complex:
+  env:
+    world:
+      town: Town04
+    name: CarlaWorkzoneMergeComplexEnv-v0
+    observation.enabled: [camera, collision, birdeye_wpt, closure_camera]
+    num_vehicles: 0
+    <<: *carla_wpt
+
+    nonego_spawn_y_range:   [50.0, 80.0]    # cybertruck, fixed
+    # bg1 and bg2 spawn ranges handled in on_reset() directly
+    # bg1: y=100-120 (ahead of ego y=130)
+    # bg2: y=145-160 (behind ego y=130)
+    # follower: y=148-165 (behind ego in lane-1)
+
+    lane_start_points:
+      - [5.24, 130, 0.1]
+    lane_end_points:
+      - [5.24, -20.0, 0.1]
+
+    reward:
+      desired_speed: 4
+      early_lane_change_dist: 12
+      lane_width: 3.5
+      scales:
+        {
+          waypoint:            2.0,
+          speed:               0.5,
+          collision:           30.0,
+          out_of_lane:         0.0,
+          time:                0.0,
+          destination_reached: 0.0,
+          stay_same_lane:      2.0,
+          early_lane_change:   5.0,
+          r_merge:             200.0,
+          steer_smooth:        0.3,
+        }
+
+    terminal:
+      time_limit:         500
+      out_lane_thres:     5
+      left_lane_boundry:  4.5
+      right_lane_boundry: 20.0
+
+  dreamerv3:
+    encoder.cnn_keys: "birdeye_wpt"
+    decoder.cnn_keys: "birdeye_wpt"
+    run.log_keys_video: [camera, birdeye_wpt, closure_camera]
+    run.log_keys_max: "success|is_collision|time_exceeded|out_of_lane"
