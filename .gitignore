@@ -7,3 +7,16 @@ logdir/
 log_*.log
 __pycache__/
 *.pyc
+
+# restored from upstream
+*.log
+*.py[cod]
+*.egg-info
+.vscode/
+.idea/
+wandb/
+
+# analysis outputs
+*.npy
+*.pt
+*.pkl
