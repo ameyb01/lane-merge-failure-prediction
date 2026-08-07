@@ -20,7 +20,6 @@ from .carla_roundabout_env import CarlaRoundaboutEnv
 from .carla_stop_sign_env import CarlaStopSignEnv
 from .carla_workzone_merge_interactive_env import CarlaWorkzoneMergeInteractiveEnv
 from .carla_workzone_merge_env import CarlaWorkzoneMergeEnv
-from .carla_overtake_static_env import CarlaOvertakeStaticEnv
 from .carla_traffic_lights_env import CarlaTrafficLightsEnv
 from .carla_wpt_env import CarlaWptEnv
 from .carla_wpt_fixed_env import CarlaWptFixedEnv
