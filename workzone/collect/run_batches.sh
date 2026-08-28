@@ -19,10 +19,10 @@ start_carla() {
     pkill -u "$USER" -f CarlaUE4 >/dev/null 2>&1
     sleep 5
     "$CARLA" -RenderOffScreen -carla-port=2000 -quality-level=Low \
-        >/dev/null 2>&1 &
+        >>"$OUT/carla.log" 2>&1 &
     for _ in $(seq 1 60); do
         sleep 2
-        nc -z localhost 2000 && return 0
+        nc -z localhost 2000 && { sleep 15; return 0; }
     done
     return 1
 }
