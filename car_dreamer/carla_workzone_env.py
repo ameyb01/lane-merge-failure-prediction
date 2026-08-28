@@ -238,8 +238,15 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
 
     def apply_control(self, action) -> None:
         """`action` is ignored. Every vehicle produces its own control."""
+        alive = []
         for d in self.drivers:
-            d.vehicle.apply_control(d.step(self._neighbours(d), self.DT))
+            try:
+                d.vehicle.apply_control(d.step(self._neighbours(d), self.DT))
+                alive.append(d)
+            except RuntimeError:
+                pass          # actor gone; drop it from the population
+        self.drivers = alive
+
 
     def on_step(self) -> None:
         """Called by WorldManager.step() after the tick."""
@@ -254,21 +261,20 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
                 self._resolved[d.vehicle.id] = outcome.value
                 self._events.append((self._n_ticks, d.vehicle.id, outcome.value))
 
-        # Despawn vehicles past the work zone -- they are outside the
-        # sensed region, and Town04's ramp junctions confuse the
-        # lane-follower down there. Never despawn the ego: the observer
-        # holds a reference to it.
-        still_here = []
+        # Despawn vehicles past the work zone. Compare the actor OBJECT,
+        # not the id -- CARLA recycles ids across episodes, so an id check
+        # can destroy the ego by mistake.
+        keep = []
         for d in self.drivers:
-            if (d.vehicle.id != self.ego.id
-                    and d.progress() > self.BUFFER_END_S + 30):
+            past = d.progress() > self.BUFFER_END_S + 30
+            if past and d.vehicle is not self.ego:
                 try:
                     d.vehicle.destroy()
                 except Exception:
                     pass
             else:
-                still_here.append(d)
-        self.drivers = still_here
+                keep.append(d)
+        self.drivers = keep
 
     def _neighbours(self, subject: Driver) -> Dict:
         """
