@@ -24,7 +24,7 @@ from .carla_traffic_lights_env import CarlaTrafficLightsEnv
 from .carla_wpt_env import CarlaWptEnv
 from .carla_wpt_fixed_env import CarlaWptFixedEnv
 from .carla_workzone_merge_complex_env import CarlaWorkzoneMergeComplexEnv
-
+from .carla_workzone_env import CarlaWorkzoneEnv
 __version__ = "0.2.0"
 
 from . import toolkit

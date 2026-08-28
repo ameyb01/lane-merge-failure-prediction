@@ -4,7 +4,7 @@ env:
   world:
     carla_port: 2000
     town: "Town04" # which town map to use
-    actor_active_distance: 300
+    actor_active_distance: 500
     fixed_delta_seconds: 0.1
     auto_lane_change: True
     traffic:

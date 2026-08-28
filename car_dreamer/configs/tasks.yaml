@@ -643,3 +643,35 @@ carla_workzone_merge_complex:
     decoder.cnn_keys: "birdeye_wpt"
     run.log_keys_video: [camera, birdeye_wpt, closure_camera]
     run.log_keys_max: "success|is_collision|time_exceeded|out_of_lane"
+
+carla_workzone:
+  env:
+    world:
+      town: Town04
+      fixed_delta_seconds: 0.1
+      actor_active_distance: 500
+    name: CarlaWorkzoneEnv-v0
+    observation.enabled: [collision, closure_camera]
+    num_vehicles: 6
+    closed_lane_id: -1
+    open_lane_id: -2
+    lane_ref_x: 5.24
+    approach_start_y: 230.0
+    taper_start_y: 0.0
+    taper_end_y: -165.0
+    buffer_end_y: -215.0
+    posted_speed: 20.12
+    n_vehicles: 12
+    closed_lane_fraction: 0.5
+    min_spawn_headway: 45.0
+    settle_seconds: 0.6
+    step_cap: 800
+    episode_seed: 0
+    action:
+      discrete: False
+      continuous_acc: [-3.0, 3.0]
+      continuous_steer: [-1.0, 1.0]
+    terminal:
+      time_limit: 800
+  dreamerv3:
+    run.log_keys_video: [closure_camera]
