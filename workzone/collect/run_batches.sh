@@ -16,6 +16,12 @@ mkdir -p "$OUT"
 LOG="$OUT/collect.log"
 
 start_carla() {
+    # Reuse a server that is already answering. Killing a healthy CARLA and
+    # doing a fresh boot followed immediately by load_world is the step that
+    # segfaults, so only restart when we actually have to.
+    if nc -z localhost 2000; then
+        return 0
+    fi
     pkill -u "$USER" -f CarlaUE4 >/dev/null 2>&1
     sleep 5
     "$CARLA" -RenderOffScreen -carla-port=2000 -quality-level=Low \

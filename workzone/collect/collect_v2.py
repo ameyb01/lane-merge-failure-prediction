@@ -74,6 +74,7 @@ def episode_to_arrays(frames: List[List[Dict]]) -> Dict[str, np.ndarray]:
 
 def run_episode(env, ep_index: int) -> Dict:
     """One episode. Returns arrays plus metadata, or raises."""
+    env.unwrapped._episode_index = ep_index - 1
     env.reset()
     frames: List[List[Dict]] = []
     t0 = time.time()
