@@ -265,7 +265,9 @@ def main():
     geo = {"approach": APPROACH_S, "taper_start": TAPER_START_S,
            "taper_end": TAPER_END_S, "buffer_end": BUFFER_END_S}
 
-    html = (HTML
+    # the template was written with doubled braces; undo that before
+    # substitution or the CSS and JS both arrive malformed
+    html = (HTML.replace("{{", "{").replace("}}", "}")
             .replace("__FRAMES__", json.dumps(frames))
             .replace("__GEO__", json.dumps(geo))
             .replace("__TMAX__", str(len(frames) - 1))

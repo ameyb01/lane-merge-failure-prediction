@@ -71,7 +71,7 @@ def sample_driver_params(rng: np.random.Generator,
     return DriverParams(
         # [ASSUMED] freeway merge critical gaps are usually quoted in the
         # 2.5-6 s range; this spread is a guess pending calibration
-        critical_gap=float(rng.uniform(2.5, 6.0)),
+        critical_gap=float(rng.uniform(1.0, 3.0)),
 
         # [ASSUMED] time-to-taper-end at which a driver starts looking
         merge_init_time=float(rng.uniform(4.0, 12.0)),
@@ -306,9 +306,14 @@ class Driver:
         Gap acceptance against a per-driver critical gap.
 
         lead_time : how long until I close on the vehicle ahead in the
-                    target lane, at my speed
+                    target lane, at the rate I am closing on it
         lag_time  : how long until the vehicle behind in the target lane
-                    reaches me, at its speed
+                    reaches me, at the rate it is closing on me
+
+        Both use CLOSING speed, not absolute speed. Dividing by absolute
+        speed reports a vehicle 39 m back travelling at nearly my own speed
+        as 2.8 s away when the true figure is 50 s, which made drivers abort
+        merges they had already almost completed.
 
         Both must exceed critical_gap. Time-based, so it stays meaningful
         across speeds.
@@ -317,11 +322,14 @@ class Driver:
         lag = neighbours.get("target_lag")
 
         v = max(self.speed(), 0.5)
-        lead_time = (lead["gap"] / v) if lead else float("inf")
+
+        if lead:
+            lead_time = lead["gap"] / max(v - lead["speed"], 0.1)
+        else:
+            lead_time = float("inf")
 
         if lag:
-            v_lag = max(lag["speed"], 0.5)
-            lag_time = lag["gap"] / v_lag
+            lag_time = lag["gap"] / max(lag["speed"], 0.5)
         else:
             lag_time = float("inf")
 
