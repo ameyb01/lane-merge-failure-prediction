@@ -23,7 +23,13 @@ start_carla() {
         return 0
     fi
     pkill -u "$USER" -f CarlaUE4 >/dev/null 2>&1
-    sleep 5
+    # Wait for the port to actually clear. Launching while it is still
+    # bound gives "bind: Address already in use" and an immediate segfault.
+    for _ in $(seq 1 30); do
+        nc -z localhost 2000 || break
+        sleep 2
+    done
+    sleep 3
     "$CARLA" -RenderOffScreen -carla-port=2000 -quality-level=Low \
         >>"$OUT/carla.log" 2>&1 &
     for _ in $(seq 1 60); do
