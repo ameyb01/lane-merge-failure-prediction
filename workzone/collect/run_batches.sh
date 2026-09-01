@@ -19,7 +19,11 @@ start_carla() {
     # Reuse a server that is already answering. Killing a healthy CARLA and
     # doing a fresh boot followed immediately by load_world is the step that
     # segfaults, so only restart when we actually have to.
-    if nc -z localhost 2000; then
+    # A port check is not a health check: CARLA reaches a state where it
+    # still accepts connections but load_world times out. Only reuse a
+    # server that can actually serve a map.
+    if nc -z localhost 2000 && \
+       python workzone/analysis/whichmap.py >/dev/null 2>&1; then
         return 0
     fi
     pkill -u "$USER" -f CarlaUE4 >/dev/null 2>&1

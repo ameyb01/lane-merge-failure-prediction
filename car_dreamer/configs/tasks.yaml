@@ -661,7 +661,7 @@ carla_workzone:
     taper_end_y: -165.0
     buffer_end_y: -215.0
     posted_speed: 20.12
-    n_vehicles: 6
+    n_vehicles: 10
     closed_lane_fraction: 0.5
     min_spawn_headway: 45.0
     settle_seconds: 0.6
