@@ -46,20 +46,24 @@ class ClosureCameraHandler(BaseHandler):
         # Update camera position if nonego location changed
         nonego_loc = env_state.get("nonego_location", None)
         if nonego_loc is not None and self._camera is not None:
-            if self._nonego_location != nonego_loc:
-                self._nonego_location = nonego_loc
-                cam_transform = carla.Transform(
-                    carla.Location(
-                        x=nonego_loc[0],
-                        y=nonego_loc[1] + 3.0,  # slightly behind truck toward ego
-                        z=self._config.height,
-                    ),
-                    carla.Rotation(
-                        pitch=self._config.pitch,
-                        yaw=90,  # looking toward y=130 where ego spawns
-                    ),
-                )
-                self._camera.set_transform(cam_transform)
+            # Set unconditionally. Guarding on "has the location changed"
+            # never fires when the work vehicle spawns in the same place
+            # every episode, and the sensor is respawned at the world
+            # origin between episodes, so the camera ends up looking at
+            # nothing. Setting a transform is cheap.
+            self._nonego_location = nonego_loc
+            cam_transform = carla.Transform(
+                carla.Location(
+                    x=nonego_loc[0],
+                    y=nonego_loc[1] + 3.0,   # just behind the truck
+                    z=self._config.height,
+                ),
+                carla.Rotation(
+                    pitch=self._config.pitch,
+                    yaw=90,                  # facing oncoming traffic
+                ),
+            )
+            self._camera.set_transform(cam_transform)
 
         obs_data = self._data if self._data is not None else np.zeros(
             self._config.shape, dtype=np.uint8
@@ -67,6 +71,12 @@ class ClosureCameraHandler(BaseHandler):
         return {self._config.key: obs_data}, {}
 
     def reset(self, ego: carla.Actor) -> None:
+        # Clear the cached location. The camera only repositions when
+        # nonego_location CHANGES, so with a fixed work vehicle it would
+        # never move after the first episode -- and the sensor is respawned
+        # at the world origin between episodes.
+        self._nonego_location = None
+
         # Spawn camera once — position updated in get_observation
         if self._camera is None:
             bp = self._world.get_blueprint("sensor.camera.rgb")

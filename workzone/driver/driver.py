@@ -74,7 +74,7 @@ def sample_driver_params(rng: np.random.Generator,
         critical_gap=float(rng.uniform(1.0, 3.0)),
 
         # [ASSUMED] time-to-taper-end at which a driver starts looking
-        merge_init_time=float(rng.uniform(4.0, 12.0)),
+        merge_init_time=float(rng.uniform(3.0, 7.0)),
 
         # [ASSUMED] fraction of critical_gap below which a committed
         # driver pulls back
@@ -255,7 +255,8 @@ class Driver:
         real = [l for l in leads if l is not None]
         return min(real, key=lambda l: l["gap"]) if real else None
 
-    def longitudinal_control(self, accel: float, dt: float):
+    def longitudinal_control(self, accel: float, dt: float,
+                             lead: Optional[Dict] = None):
         """
         Integrate the IDM acceleration into a speed command, then close the
         loop on it with a PI controller. Returns (throttle, brake).
@@ -263,18 +264,21 @@ class Driver:
         self.v_cmd = float(np.clip(self.v_cmd + accel * dt,
                                    0.0, self.p.desired_speed * 1.2))
 
-        # A committed driver needs forward motion to complete the lateral
-        # move -- pure pursuit produces almost no steering below ~1 m/s.
-        # Real drivers creep across from a stopped queue; this lets ours
-        # do the same, instead of deadlocking at 0.15 m/s in the closed lane.
+        # Creep so a committed driver can still steer across -- pure pursuit
+        # produces almost no steering below ~1 m/s. But never creep into
+        # something: an unconditional floor drove committed vehicles at
+        # 2.1 m/s into stationary cars, and suppressing it on any braking
+        # at all left them deadlocked mid-merge. Suppress only when a
+        # vehicle is genuinely close ahead.
         if self.state == MergeState.COMMITTED:
-            self.v_cmd = max(self.v_cmd, self.p.creep_speed)
+            blocked = lead is not None and lead["gap"] < 6.0
+            if not blocked:
+                self.v_cmd = max(self.v_cmd, self.p.creep_speed)
 
         err = self.v_cmd - self.speed()
         self._ierr = float(np.clip(self._ierr + err * dt, -10.0, 10.0))
         u = self.p.kp * err + self.p.ki * self._ierr
         return float(np.clip(u, 0.0, 1.0)), float(np.clip(-u, 0.0, 1.0))
-    # ---------- lateral: pure pursuit ----------
 
     def pure_pursuit_steer(self, target_lane_id: int) -> float:
         t = self.vehicle.get_transform()
@@ -402,7 +406,7 @@ class Driver:
                                           self.closure_as_lead())
 
         accel = self.idm_accel(lead)
-        throttle, brake = self.longitudinal_control(accel, dt)
+        throttle, brake = self.longitudinal_control(accel, dt, lead)
         steer = self.pure_pursuit_steer(steer_lane)
 
         self.last_debug = {

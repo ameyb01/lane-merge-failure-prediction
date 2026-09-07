@@ -59,7 +59,7 @@ env:
     closure_camera:
       handler: closure_camera
       key: closure_camera
-      shape: [128, 128, 3]
+      shape: [256, 256, 3]
       height: 5.0
       pitch: -10
       fov: 90

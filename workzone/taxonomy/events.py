@@ -29,6 +29,7 @@ HARD_BRAKE = 3.4          # m/s^2 [ASSUMED] ~0.35 g
 
 class Outcome(Enum):
     """Mutually exclusive. Evaluated in order; first match wins."""
+    COLLISION    = "collision"        # struck another vehicle; overrides all
     STOP_IN_LANE = "stop_in_lane"     # halted in the closed lane
     NO_MERGE     = "no_merge"         # reached taper_end still in the closed lane
     FORCED_MERGE = "forced_merge"     # completed inside the final 0.25 L

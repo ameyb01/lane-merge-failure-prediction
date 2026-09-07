@@ -123,6 +123,10 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         self._world.step() here -- it would fire on_step() before episode
         state exists. The server free-runs, so a sleep settles physics.
         """
+        # sensors from the previous episode are attached to actors the
+        # WorldManager is about to destroy
+        self._destroy_collision_sensors()
+
         self._load_geometry()
 
         self._episode_index = getattr(self, "_episode_index", -1) + 1
@@ -133,6 +137,8 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         # episode state BEFORE spawning, so nothing reads it half-built
         self._n_ticks = 0
         self._resolved: Dict[int, str] = {}
+        self._collisions: Dict[int, list] = {}
+        self._blocked: Dict[int, int] = {}
         self._events: List[Tuple[int, int, str]] = []
         self.vehicles: List[carla.Actor] = []
         self.drivers: List[Driver] = []
@@ -225,9 +231,82 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         for v, params in pending:
             self.drivers.append(Driver(v, params, amap, closure))
 
+        self._spawn_collision_sensors()
+
         # the observer needs an actor to attach to; this confers no
         # behavioural privilege -- it is a Driver like all the others
-        self.ego = self.vehicles[0]
+        # The observer needs an actor to attach to. Prefer a closed-lane
+        # vehicle so the recorded ego view shows a driver that actually has
+        # to merge; this confers no behavioural privilege.
+        merging = [d for d in self.drivers
+                   if d.origin_lane_id == self.CLOSED_LANE]
+        self.ego = (merging[0] if merging else self.drivers[0]).vehicle
+
+    def _spawn_collision_sensors(self) -> None:
+        """
+        One collision sensor per vehicle.
+
+        CarlaBaseEnv.is_collision() reads a single global flag from the
+        observer's own sensor, which cannot say WHICH vehicles collided.
+        Attaching a sensor to each vehicle gives exact attribution and the
+        collision partner, which matters for the rear-end cases: a merger
+        who forces in and is struck is a different event from one that
+        simply stops.
+        """
+        self._collisions = {}          # vehicle id -> list of event dicts
+        self._collision_sensors = []
+
+        bp = self._world.get_blueprint("sensor.other.collision")
+        own_ids = {v.id for v in self.vehicles}
+
+        for v in self.vehicles:
+            sensor = self._world.spawn_unmanaged_actor(
+                carla.Transform(), bp, attach_to=v)
+
+            def on_hit(event, vid=v.id):
+                other = event.other_actor
+                other_id = other.id if other is not None else -1
+                imp = event.normal_impulse
+                self._collisions.setdefault(vid, []).append({
+                    "tick": self._n_ticks,
+                    "other_id": other_id,
+                    "other_is_vehicle": other_id in own_ids,
+                    "impulse": round(
+                        (imp.x ** 2 + imp.y ** 2 + imp.z ** 2) ** 0.5, 2),
+                })
+
+            sensor.listen(on_hit)
+            self._collision_sensors.append(sensor)
+
+    def _destroy_collision_sensors(self) -> None:
+        for s in getattr(self, "_collision_sensors", []):
+            try:
+                s.stop()
+                s.destroy()
+            except Exception:
+                pass
+        self._collision_sensors = []
+
+    def _blocked_by(self, subject: Driver) -> int:
+        """
+        Id of a stopped vehicle within 12 m ahead in the same lane, or -1.
+
+        A follower halted by the queue never made a merge decision, so its
+        stop says nothing about gap acceptance. Recording the blocker keeps
+        the two cases separable.
+        """
+        s_me = subject.progress()
+        lane = subject.current_waypoint().lane_id
+        best, best_d = -1, 1e9
+        for other in self.drivers:
+            if other is subject or other.speed() >= 0.5:
+                continue
+            if other.current_waypoint().lane_id != lane:
+                continue
+            d = other.progress() - s_me
+            if 0 < d < 12.0 and d < best_d:
+                best, best_d = other.vehicle.id, d
+        return best
 
     def get_ego_vehicle(self) -> carla.Actor:
         return self.ego
@@ -256,9 +335,21 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
             update_stop_tracking(d, self.DT)
             if d.vehicle.id in self._resolved:
                 continue
+
+            # A vehicle that crashed has not merged successfully, wherever
+            # it ended up, so collision takes precedence. Only closed-lane
+            # vehicles get an outcome; open-lane hits stay in the event log.
+            if (self._collisions.get(d.vehicle.id)
+                    and d.origin_lane_id == self.CLOSED_LANE):
+                self._resolved[d.vehicle.id] = "collision"
+                self._events.append((self._n_ticks, d.vehicle.id, "collision"))
+                continue
+
             outcome = classify_vehicle(d, self.TAPER_START_S, self.TAPER_END_S)
             if outcome is not None:
                 self._resolved[d.vehicle.id] = outcome.value
+                if outcome.value == "stop_in_lane":
+                    self._blocked[d.vehicle.id] = self._blocked_by(d)
                 self._events.append((self._n_ticks, d.vehicle.id, outcome.value))
 
         # Despawn vehicles past the work zone. Compare the actor OBJECT,
@@ -360,6 +451,9 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
             "n_closed_lane": n_closed,
             "n_resolved": len(self._resolved),
             "outcomes": dict(self._resolved),
+            "collisions": {k: list(v) for k, v in self._collisions.items()},
+            "blocked_by": dict(self._blocked),
+            "n_collisions": sum(len(v) for v in self._collisions.values()),
         }
         return 0.0, info
 
@@ -375,11 +469,18 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         closed = [d for d in self.drivers
                   if d.origin_lane_id == self.CLOSED_LANE]
 
-        all_resolved = bool(closed) and all(
-            d.vehicle.id in self._resolved for d in closed)
+        # A vehicle part-way across should finish. Without this an episode
+        # can end while a merge is in progress, labelling that vehicle by
+        # whatever state it happened to be in.
+        mid_merge = any(d.state == MergeState.COMMITTED for d in self.drivers)
 
-        cleared = bool(self.drivers) and all(
-            d.progress() >= self.BUFFER_END_S for d in self.drivers)
+        all_resolved = (bool(closed)
+                        and all(d.vehicle.id in self._resolved for d in closed)
+                        and not mid_merge)
+
+        cleared = (bool(self.drivers)
+                   and all(d.progress() >= self.BUFFER_END_S for d in self.drivers)
+                   and not mid_merge)
 
         return {
             "all_resolved": all_resolved,
@@ -388,8 +489,12 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         }
 
     def get_state(self) -> Dict:
+        wv = self.work_vehicle.get_location()
         return {
             "timesteps": self._n_ticks,
             "taper_start_s": self.TAPER_START_S,
             "taper_end_s": self.TAPER_END_S,
+            # ClosureCameraHandler reads this to position itself. Without
+            # it the camera stays at its spawn transform (world origin).
+            "nonego_location": (wv.x, wv.y),
         }

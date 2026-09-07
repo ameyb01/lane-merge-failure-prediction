@@ -93,6 +93,8 @@ def run_episode(env, ep_index: int) -> Dict:
         "n_vehicles": int(info.get("n_vehicles", 0)),
         "n_closed_lane": int(info.get("n_closed_lane", 0)),
         "outcomes": {str(k): v for k, v in info.get("outcomes", {}).items()},
+        "collisions": {str(k): v for k, v in info.get("collisions", {}).items()},
+        "blocked_by": {str(k): v for k, v in info.get("blocked_by", {}).items()},
         "wall_seconds": round(time.time() - t0, 1),
     }
     return {"data": data, "meta": meta}

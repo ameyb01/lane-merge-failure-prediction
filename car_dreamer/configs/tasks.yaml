@@ -651,19 +651,19 @@ carla_workzone:
       fixed_delta_seconds: 0.1
       actor_active_distance: 500
     name: CarlaWorkzoneEnv-v0
-    observation.enabled: [collision, closure_camera]
+    observation.enabled: [collision, closure_camera, camera]
     num_vehicles: 6
     closed_lane_id: -1
     open_lane_id: -2
     lane_ref_x: 5.24
-    approach_start_y: 230.0
+    approach_start_y: 30.0
     taper_start_y: 0.0
-    taper_end_y: -165.0
-    buffer_end_y: -215.0
-    posted_speed: 20.12
-    n_vehicles: 10
+    taper_end_y: -45.0
+    buffer_end_y: -55.0
+    posted_speed: 9.0
+    n_vehicles: 4
     closed_lane_fraction: 0.5
-    min_spawn_headway: 45.0
+    min_spawn_headway: 10.0
     settle_seconds: 0.6
     step_cap: 800
     episode_seed: 0
