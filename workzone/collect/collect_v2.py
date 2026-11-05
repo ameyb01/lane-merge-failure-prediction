@@ -95,6 +95,10 @@ def run_episode(env, ep_index: int) -> Dict:
         "outcomes": {str(k): v for k, v in info.get("outcomes", {}).items()},
         "collisions": {str(k): v for k, v in info.get("collisions", {}).items()},
         "blocked_by": {str(k): v for k, v in info.get("blocked_by", {}).items()},
+        "impact_s": {str(k): v for k, v in info.get("impact_s", {}).items()},
+        "resolved_s": {str(k): v for k, v in info.get("resolved_s", {}).items()},
+        "final_s": {str(k): v for k, v in info.get("final_s", {}).items()},
+        "n_inflow": int(info.get("n_inflow", 0)),
         "wall_seconds": round(time.time() - t0, 1),
     }
     return {"data": data, "meta": meta}
@@ -105,8 +109,8 @@ def main():
     ap.add_argument("--episodes", type=int, default=50)
     ap.add_argument("--out", type=str, default="data/wz_v2")
     ap.add_argument("--task", type=str, default="carla_workzone")
-    ap.add_argument("--n-vehicles", type=int, default=None)
-    ap.add_argument("--closed-fraction", type=float, default=None)
+    ap.add_argument("--n-closed", type=int, default=None)
+    ap.add_argument("--inflow-rate", type=float, default=None)
     ap.add_argument("--seed-offset", type=int, default=0)
     args = ap.parse_args()
 
@@ -125,10 +129,10 @@ def main():
         print(f"[resume] {len(done_ids)} episodes already collected")
 
     overrides = []
-    if args.n_vehicles is not None:
-        overrides.append(f"--env.n_vehicles={args.n_vehicles}")
-    if args.closed_fraction is not None:
-        overrides.append(f"--env.closed_lane_fraction={args.closed_fraction}")
+    if args.n_closed is not None:
+        overrides.append(f"--env.n_closed={args.n_closed}")
+    if args.inflow_rate is not None:
+        overrides.append(f"--env.inflow_rate={args.inflow_rate}")
 
     env, cfg = car_dreamer.create_task(args.task, overrides)
 

@@ -8,6 +8,7 @@ set -u
 
 TARGET="${1:-200}"
 OUT="${2:-data/wz_200}"
+RATE="${3:-}"
 CARLA="${CARLA:-$HOME/software/CarlaUE4.sh}"
 REPO="$HOME/research2/CarDreamer"
 
@@ -47,7 +48,8 @@ done_count() {
     [ -f "$OUT/manifest.jsonl" ] && wc -l < "$OUT/manifest.jsonl" || echo 0
 }
 
-echo "=== batch collection: target=$TARGET out=$OUT ===" | tee -a "$LOG"
+echo "=== batch collection: target=$TARGET out=$OUT rate=${RATE:-default} ===" \
+    | tee -a "$LOG"
 
 stalls=0
 while :; do
@@ -61,8 +63,14 @@ while :; do
         continue
     fi
 
-    python workzone/collect/collect_v2.py \
-        --episodes "$TARGET" --out "$OUT" >>"$LOG" 2>&1
+    if [ -n "$RATE" ]; then
+        python workzone/collect/collect_v2.py \
+            --episodes "$TARGET" --out "$OUT" \
+            --inflow-rate "$RATE" >>"$LOG" 2>&1
+    else
+        python workzone/collect/collect_v2.py \
+            --episodes "$TARGET" --out "$OUT" >>"$LOG" 2>&1
+    fi
 
     after=$(done_count)
     if [ "$after" -le "$have" ]; then
