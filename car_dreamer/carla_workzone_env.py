@@ -80,6 +80,9 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         self.BUFFER_END_S = -(float(c.buffer_end_y) - self._taper_start_y)
 
         self.POSTED_SPEED = float(c.posted_speed)
+        self.INFLOW_RATE = float(c.inflow_rate)
+        self.MIN_INFLOW_HEADWAY = float(c.min_inflow_headway)
+        self.INFLOW_START_S = float(c.inflow_start_s)
         self.STEP_CAP = int(c.step_cap)
         self.DT = float(c.world.fixed_delta_seconds)
 
@@ -139,9 +142,17 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         self._resolved: Dict[int, str] = {}
         self._collisions: Dict[int, list] = {}
         self._blocked: Dict[int, int] = {}
+        self._impact_s: Dict[int, float] = {}
+        self._resolved_s: Dict[int, float] = {}
+        self._final_s: Dict[int, float] = {}
         self._events: List[Tuple[int, int, str]] = []
         self.vehicles: List[carla.Actor] = []
         self.drivers: List[Driver] = []
+        self._own_ids: set = set()
+        self._sensor_by_vehicle: Dict[int, carla.Actor] = {}
+        self._pending_inflow: List[Tuple[carla.Actor, object]] = []
+        self._next_inflow_t = 0.0
+        self._n_inflow = 0
 
         self._spawn_work_vehicle()
         self._spawn_traffic()
@@ -158,65 +169,105 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
             blueprint=self._world.get_blueprint("vehicle.tesla.cybertruck"))
         self.work_vehicle.set_simulate_physics(False)
 
+    def _draw_headway(self) -> float:
+        """
+        Shifted-exponential time headway, in seconds.
+
+        Plain exponential puts mass at zero headway, which is physically
+        impossible for 4.8 m vehicles. Shifting by a floor keeps the
+        Poisson character while respecting car-following.
+        """
+        mean = 3600.0 / self.INFLOW_RATE
+        excess = max(mean - self.MIN_INFLOW_HEADWAY, 0.1)
+        return self.MIN_INFLOW_HEADWAY + float(self._rng.exponential(excess))
+
+    def _place_vehicle(self, lane_id: int, s: float, speed: float
+                       ) -> Optional[carla.Actor]:
+        """
+        Put one vehicle in `lane_id` at corridor position `s`, already
+        moving at `speed`. Returns None if the slot is occupied or the
+        lane does not exist there.
+
+        Open-lane vehicles get their velocity at spawn. Starting them at
+        rest would make every one accelerate through the approach, so the
+        open lane would be a rolling queue rather than free-flowing
+        traffic and the gaps a merger sees would be wrong.
+        """
+        y = self._taper_start_y - s
+        wp = self._waypoint_in_lane(y, lane_id)
+        if wp is None:
+            return None
+
+        v = self._world.try_spawn_actor(
+            transform=self._transform_at(wp),
+            blueprint=self._world.get_blueprint("vehicle.tesla.model3"))
+        if v is None:
+            return None
+
+        if speed > 0.0:
+            fwd = wp.transform.get_forward_vector()
+            v.set_target_velocity(
+                carla.Vector3D(fwd.x * speed, fwd.y * speed, 0.0))
+
+        self.vehicles.append(v)
+        self._attach_collision_sensor(v)
+        return v
+
     def _spawn_traffic(self) -> None:
         """
-        Lay vehicles down in disjoint longitudinal slots, allocated
-        SEPARATELY per lane.
+        Closed-lane vehicles in disjoint slots, plus a seeded open-lane
+        stream that _maybe_spawn_inflow then keeps fed.
 
-        Sharing one slot pool across both lanes packed the open lane at
-        ~29 m spacing -- 1.5 s gaps at 20 m/s, against critical gaps of
-        2.5-6 s. No gap was ever acceptable and every closed-lane driver
-        stopped at the taper. Per-lane allocation keeps open-lane spacing
-        at a full headway apart.
+        The open lane used to be a fixed set placed at t=0. That made
+        every episode "merge problem for ~15 s, then empty road":
+        occupancy near the taper peaked around t=7-10 s and reached zero
+        by t=22, so the first car in the queue met traffic and the last
+        met clear road. Queue position alone predicted the outcome at
+        AUC ~0.81 -- a spawn artifact, not merge behaviour.
         """
         c = self._config
-        n = int(c.n_vehicles)
-        closed_frac = float(c.closed_lane_fraction)
+        n_closed = int(c.n_closed)
         headway = float(c.min_spawn_headway)
 
-        span = abs(self.APPROACH_S)              # 230 m of approach
+        span = abs(self.APPROACH_S)
         slots = max(int(span / headway), 2)
 
-        n_closed = int(round(n * closed_frac))
-        lane_plan = [(self.CLOSED_LANE, n_closed),
-                     (self.OPEN_LANE, n - n_closed)]
-
         pending: List[Tuple[carla.Actor, object]] = []
+        placed_closed = 0
+        placed_open = 0
 
-        for lane, count in lane_plan:
-            if count <= 0:
+        # closed lane: discrete slots, at rest
+        chosen = self._rng.choice(slots, size=min(n_closed, slots),
+                                  replace=False)
+        for slot in chosen:
+            s = self.APPROACH_S + (slot + self._rng.uniform(0.15, 0.85)) * headway
+            v = self._place_vehicle(self.CLOSED_LANE, s, 0.0)
+            if v is None:
+                print(f"[spawn] closed slot {slot}: failed at s={s:.1f}")
                 continue
-            chosen = self._rng.choice(slots, size=min(count, slots),
-                                      replace=False)
-            for slot in chosen:
-                s = self.APPROACH_S + (slot + self._rng.uniform(0.15, 0.85)) * headway
-                y = self._taper_start_y - s
+            pending.append(
+                (v, sample_driver_params(self._rng, self.POSTED_SPEED)))
+            placed_closed += 1
 
-                wp = self._waypoint_in_lane(y, lane)
-                if wp is None:
-                    print(f"[spawn] lane {lane} slot {slot}: "
-                          f"no lane at y={y:.1f}")
-                    continue
-
-                v = self._world.try_spawn_actor(
-                    transform=self._transform_at(wp),
-                    blueprint=self._world.get_blueprint("vehicle.tesla.model3"))
-                if v is None:
-                    print(f"[spawn] lane {lane} slot {slot}: "
-                          f"spawn failed at y={y:.1f}")
-                    continue
-
-                self.vehicles.append(v)
+        # open lane: seed the stream so it is already established at t=0
+        s = self.INFLOW_START_S
+        while s < self.TAPER_END_S:
+            # At rest, NOT at speed. reset() runs in ASYNCHRONOUS mode, so
+            # the server free-runs while the rest of the spawn loop executes
+            # and a vehicle given velocity here travels ~200 m before the
+            # episode starts -- past the despawn line, so it vanishes on the
+            # first tick. Inflow vehicles spawn during synchronous steps and
+            # do get their velocity.
+            v = self._place_vehicle(self.OPEN_LANE, s, 0.0)
+            if v is not None:
                 pending.append(
                     (v, sample_driver_params(self._rng, self.POSTED_SPEED)))
+                placed_open += 1
+            s += self._draw_headway() * self.POSTED_SPEED
 
-        n_c = sum(1 for v in self.vehicles
-                  if self._world.carla_map.get_waypoint(
-                      v.get_location(), project_to_road=True,
-                      lane_type=carla.LaneType.Driving).lane_id == self.CLOSED_LANE)
-        print(f"[spawn] {len(self.vehicles)}/{n} placed "
-              f"({n_c} closed, {len(self.vehicles) - n_c} open), "
-              f"slots={slots}, headway={headway:.0f}m")
+        print(f"[spawn] {placed_closed}/{n_closed} closed, "
+              f"{placed_open} open seeded, "
+              f"inflow={self.INFLOW_RATE:.0f} veh/h")
 
         if not self.vehicles:
             raise RuntimeError("no vehicles spawned")
@@ -231,54 +282,78 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         for v, params in pending:
             self.drivers.append(Driver(v, params, amap, closure))
 
-        self._spawn_collision_sensors()
-
-        # the observer needs an actor to attach to; this confers no
-        # behavioural privilege -- it is a Driver like all the others
         # The observer needs an actor to attach to. Prefer a closed-lane
-        # vehicle so the recorded ego view shows a driver that actually has
-        # to merge; this confers no behavioural privilege.
+        # vehicle so the recorded view shows a driver that has to merge;
+        # this confers no behavioural privilege.
+        self._next_inflow_t = self._draw_headway()
+
         merging = [d for d in self.drivers
                    if d.origin_lane_id == self.CLOSED_LANE]
         self.ego = (merging[0] if merging else self.drivers[0]).vehicle
 
-    def _spawn_collision_sensors(self) -> None:
+    def _maybe_spawn_inflow(self) -> None:
         """
-        One collision sensor per vehicle.
+        Feed the open lane continuously from the upstream boundary.
 
-        CarlaBaseEnv.is_collision() reads a single global flag from the
-        observer's own sensor, which cannot say WHICH vehicles collided.
-        Attaching a sensor to each vehicle gives exact attribution and the
-        collision partner, which matters for the rear-end cases: a merger
-        who forces in and is struck is a different event from one that
-        simply stops.
+        Vehicles are promoted to Drivers one tick after placement. CARLA
+        does not apply the spawn transform until the next tick, so a
+        Driver built immediately would read a stale location and pick the
+        wrong origin lane.
         """
-        self._collisions = {}          # vehicle id -> list of event dicts
-        self._collision_sensors = []
+        for v, params in self._pending_inflow:
+            self.drivers.append(Driver(v, params, self._world.carla_map,
+                                       self._closure_info()))
+        self._pending_inflow = []
 
+        t = self._n_ticks * self.DT
+        if t < self._next_inflow_t:
+            return
+
+        v = self._place_vehicle(self.OPEN_LANE, self.INFLOW_START_S,
+                                self.POSTED_SPEED)
+        if v is None:
+            # boundary occupied; retry at the floor rather than burning a
+            # whole headway, which would thin the stream at high rates
+            self._next_inflow_t = t + self.MIN_INFLOW_HEADWAY
+            return
+
+        self._pending_inflow.append(
+            (v, sample_driver_params(self._rng, self.POSTED_SPEED)))
+        self._n_inflow += 1
+        self._next_inflow_t = t + self._draw_headway()
+
+    def _attach_collision_sensor(self, v: carla.Actor) -> None:
+        """
+        One collision sensor per vehicle. CarlaBaseEnv.is_collision() reads
+        a single global flag that cannot say WHICH vehicles collided;
+        per-vehicle sensors give exact attribution and the partner id.
+
+        `other_is_vehicle` resolves against self._own_ids at event time,
+        not at attach time, because inflow vehicles appear later.
+        """
+        self._own_ids.add(v.id)
         bp = self._world.get_blueprint("sensor.other.collision")
-        own_ids = {v.id for v in self.vehicles}
+        sensor = self._world.spawn_unmanaged_actor(
+            carla.Transform(), bp, attach_to=v)
 
-        for v in self.vehicles:
-            sensor = self._world.spawn_unmanaged_actor(
-                carla.Transform(), bp, attach_to=v)
+        def on_hit(event, vid=v.id):
+            other = event.other_actor
+            other_id = other.id if other is not None else -1
+            imp = event.normal_impulse
+            self._collisions.setdefault(vid, []).append({
+                "tick": self._n_ticks,
+                "other_id": other_id,
+                "other_is_vehicle": other_id in self._own_ids,
+                "impulse": round(
+                    (imp.x ** 2 + imp.y ** 2 + imp.z ** 2) ** 0.5, 2),
+            })
 
-            def on_hit(event, vid=v.id):
-                other = event.other_actor
-                other_id = other.id if other is not None else -1
-                imp = event.normal_impulse
-                self._collisions.setdefault(vid, []).append({
-                    "tick": self._n_ticks,
-                    "other_id": other_id,
-                    "other_is_vehicle": other_id in own_ids,
-                    "impulse": round(
-                        (imp.x ** 2 + imp.y ** 2 + imp.z ** 2) ** 0.5, 2),
-                })
-
-            sensor.listen(on_hit)
-            self._collision_sensors.append(sensor)
+        sensor.listen(on_hit)
+        self._collision_sensors.append(sensor)
+        self._sensor_by_vehicle[v.id] = sensor
 
     def _destroy_collision_sensors(self) -> None:
+        self._sensor_by_vehicle = {}
         for s in getattr(self, "_collision_sensors", []):
             try:
                 s.stop()
@@ -330,24 +405,39 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
     def on_step(self) -> None:
         """Called by WorldManager.step() after the tick."""
         self._n_ticks += 1
+        self._maybe_spawn_inflow()
 
         for d in self.drivers:
             update_stop_tracking(d, self.DT)
-            if d.vehicle.id in self._resolved:
-                continue
 
-            # A vehicle that crashed has not merged successfully, wherever
-            # it ended up, so collision takes precedence. Only closed-lane
-            # vehicles get an outcome; open-lane hits stay in the event log.
+            # Collision is checked BEFORE the resolved-skip, because a
+            # vehicle that stopped and then crashed would otherwise keep
+            # its stop label -- that mislabelled most collisions.
+            #
+            # It counts as a merge failure only for a closed-lane vehicle
+            # that is at or past the taper start. A rear-end back in the
+            # approach is ordinary queue traffic, not a merge decision, so
+            # it is recorded as an event without an outcome. The impact
+            # position is stored either way.
             if (self._collisions.get(d.vehicle.id)
-                    and d.origin_lane_id == self.CLOSED_LANE):
-                self._resolved[d.vehicle.id] = "collision"
-                self._events.append((self._n_ticks, d.vehicle.id, "collision"))
+                    and self._resolved.get(d.vehicle.id) != "collision"):
+                if d.vehicle.id not in self._impact_s:
+                    self._impact_s[d.vehicle.id] = round(d.progress(), 2)
+                in_zone = (d.origin_lane_id == self.CLOSED_LANE
+                           and self._impact_s[d.vehicle.id] >= self.TAPER_START_S)
+                if in_zone:
+                    self._resolved[d.vehicle.id] = "collision"
+                    self._events.append(
+                        (self._n_ticks, d.vehicle.id, "collision"))
+                    continue
+
+            if d.vehicle.id in self._resolved:
                 continue
 
             outcome = classify_vehicle(d, self.TAPER_START_S, self.TAPER_END_S)
             if outcome is not None:
                 self._resolved[d.vehicle.id] = outcome.value
+                self._resolved_s[d.vehicle.id] = round(d.progress(), 2)
                 if outcome.value == "stop_in_lane":
                     self._blocked[d.vehicle.id] = self._blocked_by(d)
                 self._events.append((self._n_ticks, d.vehicle.id, outcome.value))
@@ -355,10 +445,30 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         # Despawn vehicles past the work zone. Compare the actor OBJECT,
         # not the id -- CARLA recycles ids across episodes, so an id check
         # can destroy the ego by mistake.
+        # last known position for every live vehicle, refreshed each tick so
+        # it survives despawn. Lets intrusion be an analysis-time query
+        # instead of something baked into the outcome label.
+        for d in self.drivers:
+            self._final_s[d.vehicle.id] = round(d.progress(), 2)
+
         keep = []
         for d in self.drivers:
             past = d.progress() > self.BUFFER_END_S + 30
             if past and d.vehicle is not self.ego:
+                # Destroy the sensor BEFORE its parent. An orphaned
+                # collision sensor keeps streaming to a dead actor
+                # ("Invalid session: no stream available"), and with
+                # continuous inflow these accumulate every episode until
+                # the server segfaults.
+                s_ = self._sensor_by_vehicle.pop(d.vehicle.id, None)
+                if s_ is not None:
+                    try:
+                        s_.stop()
+                        s_.destroy()
+                    except Exception:
+                        pass
+                    if s_ in self._collision_sensors:
+                        self._collision_sensors.remove(s_)
                 try:
                     d.vehicle.destroy()
                 except Exception:
@@ -398,10 +508,21 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
                 if d < 0 and (target_lag is None or -d < target_lag["_d"]):
                     target_lag = {**info, "_d": -d}
 
+        # The work vehicle lives in self.work_vehicle, not self.drivers, so
+        # the loop above never returned it and no driver's IDM ever braked
+        # for the closure. 90% of all collisions trace back to this. It is a
+        # physical obstacle in the closed lane and must be a lead vehicle.
+        if own_lane == self.CLOSED_LANE:
+            d_wv = self.progress(self.work_vehicle.get_location()) - s_self
+            if d_wv > 0:
+                clear = half_self + self.work_vehicle.bounding_box.extent.x
+                if own_lead is None or d_wv < own_lead["_d"]:
+                    own_lead = {"gap": max(d_wv - clear, 0.0),
+                                "speed": 0.0, "_d": d_wv}
+
         return {"own_lead": own_lead,
                 "target_lead": target_lead,
                 "target_lag": target_lag}
-
     # ==========================================================
     # Logging channel
     # ==========================================================
@@ -449,10 +570,14 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
             "episode_seed": self._episode_seed,
             "n_vehicles": len(self.drivers),
             "n_closed_lane": n_closed,
+            "n_inflow": self._n_inflow,
             "n_resolved": len(self._resolved),
             "outcomes": dict(self._resolved),
             "collisions": {k: list(v) for k, v in self._collisions.items()},
             "blocked_by": dict(self._blocked),
+            "impact_s": dict(self._impact_s),
+            "resolved_s": dict(self._resolved_s),
+            "final_s": dict(self._final_s),
             "n_collisions": sum(len(v) for v in self._collisions.values()),
         }
         return 0.0, info
@@ -472,7 +597,9 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         # A vehicle part-way across should finish. Without this an episode
         # can end while a merge is in progress, labelling that vehicle by
         # whatever state it happened to be in.
-        mid_merge = any(d.state == MergeState.COMMITTED for d in self.drivers)
+        mid_merge = any(d.state == MergeState.COMMITTED
+                        and d.vehicle.id not in self._resolved
+                        for d in self.drivers)
 
         all_resolved = (bool(closed)
                         and all(d.vehicle.id in self._resolved for d in closed)
@@ -498,3 +625,4 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
             # it the camera stays at its spawn transform (world origin).
             "nonego_location": (wv.x, wv.y),
         }
+
