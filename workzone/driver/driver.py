@@ -144,6 +144,10 @@ def signed_lateral_offset(loc: carla.Location, wp: carla.Waypoint) -> float:
 # ============================================================
 
 class Driver:
+    # Minimum clear slot in the target lane, metres. 4.8 m vehicle plus
+    # ~1 m at each end. Hard physical constraint, never scaled by urgency.
+    MIN_SLOT_M = 7.0
+
     """
     One driver. Call step() once per simulation tick.
 
@@ -160,6 +164,8 @@ class Driver:
         self.p = params
         self.map = carla_map
         self.closure = closure_info
+        self._stall_ticks = 0
+        self.n_aborts = 0
 
         wp = self.map.get_waypoint(vehicle.get_location(), project_to_road=True,
                                    lane_type=carla.LaneType.Driving)
@@ -176,8 +182,11 @@ class Driver:
         self.merge_init_progress: Optional[float] = None
         self.merge_complete_progress: Optional[float] = None
 
-        # longitudinal controller state
-        self.v_cmd = 0.0
+        # longitudinal controller state. Seed v_cmd from the vehicle's
+        # ACTUAL speed, not zero. Inflow vehicles are spawned already
+        # moving; starting v_cmd at 0 makes the PI controller command full
+        # brake on their first tick, so they enter the corridor at rest.
+        self.v_cmd = self.speed()
         self._ierr = 0.0
 
         self.last_debug: Dict = {}
@@ -338,11 +347,51 @@ class Driver:
             lag_time = float("inf")
 
         binding = min(lead_time, lag_time)
+
+        # URGENCY. The required gap decays with REMAINING DISTANCE to the
+        # taper end, not with time. Time is the wrong variable: a stopped
+        # driver has infinite time-to-taper-end and would become maximally
+        # patient exactly when it should be most desperate.
+        #
+        # Full critical_gap far upstream, decaying to zero at the taper
+        # end. Deliberately gradual rather than a threshold -- a threshold
+        # sitting inside the 8/6/4/2 s prediction window would make the
+        # AUC-vs-horizon curve measure the threshold's location rather
+        # than predictability, which is how the June result went wrong.
+        #
+        # critical_gap is SCALED, not replaced. It still carries the
+        # per-driver heterogeneity and the gap-acceptance literature link.
+        taper_len = max(self.closure["taper_end_s"]
+                        - self.closure["taper_start_s"], 1.0)
+        # Fraction of the merge zone still ahead: 1.0 on entry, 0.0 at
+        # the end. Named for what it does to the threshold -- high
+        # patience means the driver holds out for a full gap, and it
+        # falls to zero as the road runs out.
+        patience = float(np.clip(self.distance_to_taper_end() / taper_len,
+                                 0.0, 1.0))
+        required = self.p.critical_gap * patience
+
+        # PHYSICAL FIT. Never relaxes, however desperate the driver.
+        # Distance between the two target-lane neighbours' facing bumpers
+        # is their clearances to this vehicle plus this vehicle's length.
+        # A solid queue leaves ~one car length, which fails the test, so
+        # STOP_IN_LANE survives at heavy density instead of urgency
+        # dissolving every failure into a forced merge.
+        own_len = 2.0 * self.vehicle.bounding_box.extent.x
+        lead_gap = lead["gap"] if lead else float("inf")
+        lag_gap = lag["gap"] if lag else float("inf")
+        slot = lead_gap + lag_gap + own_len
+        fits = slot >= self.MIN_SLOT_M
+
         return {
             "lead_time": lead_time,
             "lag_time": lag_time,
             "binding": binding,
-            "acceptable": binding >= self.p.critical_gap,
+            "required": required,
+            "patience": patience,
+            "slot": slot if math.isfinite(slot) else -1.0,
+            "fits": fits,
+            "acceptable": binding >= required and fits,
         }
 
     def update_state(self, neighbours: Dict) -> Dict:
@@ -361,17 +410,38 @@ class Driver:
             # lateral move before the closed lane runs out. Without this,
             # drivers commit at the last metre and get cut off mid-crossing.
             room = self.distance_to_taper_end()
-            need = min(max(self.speed(), 1.0) * self.p.merge_duration, 15.0)
+            need = min(self.speed() * self.p.merge_duration, 15.0)
+            need = max(need, 1.0)
             if gap["acceptable"] and room >= need:
                 self.state = MergeState.COMMITTED
                 self.merge_init_progress = self.progress()
 
         elif self.state == MergeState.COMMITTED:
+            # A committed vehicle that brakes to a standstill still in the
+            # lane it is leaving is deadlocked, not merging. Pure pursuit
+            # needs forward motion to produce lateral movement, so it can
+            # never leave the lane, so the queue ahead never clears. Seen
+            # in 35/100 episodes: commit while moving, brake for the queue
+            # ahead, then sit at 0.03 m/s for 60 s. Modelled as the driver
+            # giving up and waiting in the queue, which is what SEEKING
+            # means here. 30 ticks is 3 s at the 10 Hz control loop.
+            in_origin = (self.current_waypoint().lane_id
+                         == self.origin_lane_id)
+            if self.speed() < 0.5 and in_origin:
+                self._stall_ticks += 1
+            else:
+                self._stall_ticks = 0
+
             # mechanistic abort: the accepted gap deteriorated
-            if gap["binding"] < self.p.critical_gap * self.p.abort_margin:
+            if gap["binding"] < gap["required"] * self.p.abort_margin:
                 self.state = MergeState.SEEKING
                 self.n_aborts += 1
                 self.merge_init_progress = None
+            elif self._stall_ticks >= 30:
+                self.state = MergeState.SEEKING
+                self.n_aborts += 1
+                self.merge_init_progress = None
+                self._stall_ticks = 0
             elif self.fully_in_lane(self.target_lane_id):
                 self.state = MergeState.MERGED
                 self.merge_complete_progress = self.progress()

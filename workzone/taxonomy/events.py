@@ -23,8 +23,6 @@ STOP_SPEED = 0.5          # m/s   [ASSUMED]
 STOP_DURATION = 2.0       # s     [ASSUMED]
 FORCED_FRACTION = 0.25    # of L  [ASSUMED]
 
-TTC_CONFLICT = 1.5        # s     [ASSUMED] verify vs surrogate-safety work
-HARD_BRAKE = 3.4          # m/s^2 [ASSUMED] ~0.35 g
 
 
 class Outcome(Enum):
@@ -36,10 +34,6 @@ class Outcome(Enum):
     SUCCESS      = "success"          # completed before that
 
 
-class Flag(Enum):
-    """May co-occur with any outcome. NOT terminal conditions."""
-    FOLLOWER_CONFLICT   = "follower_conflict"
-    FOLLOWER_HARD_BRAKE = "follower_hard_brake"
 
 
 def forced_merge_boundary(taper_start_s: float, taper_end_s: float) -> float:
