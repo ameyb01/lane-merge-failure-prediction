@@ -4,7 +4,7 @@ car_dreamer/carla_workzone_env.py
 Work zone merge environment, rebuilt for the infrastructure-forecaster
 project. Inherits CarlaBaseEnv directly -- NOT CarlaWptEnv.
 
-Why not CarlaWptEnv (see PROJECT_MEMO.md 3.6):
+Why not CarlaWptEnv
   - it is a waypoint-FOLLOWING base class, and this task requires
     vehicles to LEAVE the planned path
   - its r_speed penalises lateral velocity
@@ -48,13 +48,13 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
     Scene (Town04, travel toward decreasing y):
 
         approach_start_y ... taper_start_y ... taper_end_y ... buffer_end_y
-              230                 0              -165            -215
-                                                                  ^
-                                                          work vehicle
+               30                 0               -45             -55
+        s =   -30                  0               +45             +55
+                                                                    ^
+                                                            work vehicle
 
         lane -1 (closed) : vehicles here must merge before taper_end
         lane -2 (open)   : vehicles here just drive
-
     Longitudinal position is reported as `s`, distance along travel with
     taper_start at 0, so nothing downstream reads a raw world coordinate.
     """
@@ -188,10 +188,11 @@ class CarlaWorkzoneEnv(CarlaBaseEnv):
         moving at `speed`. Returns None if the slot is occupied or the
         lane does not exist there.
 
-        Open-lane vehicles get their velocity at spawn. Starting them at
-        rest would make every one accelerate through the approach, so the
-        open lane would be a rolling queue rather than free-flowing
-        traffic and the gaps a merger sees would be wrong.
+        Inflow vehicles get their velocity at spawn. Starting them at rest
+        would make every one accelerate through the approach, so the open
+        lane would be a rolling queue rather than free-flowing traffic and
+        the gaps a merger sees would be wrong. The vehicles seeded at reset
+        are placed at rest instead; see _spawn_traffic.
         """
         y = self._taper_start_y - s
         wp = self._waypoint_in_lane(y, lane_id)

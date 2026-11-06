@@ -1,16 +1,15 @@
 """
 workzone/taxonomy/events.py
 
-The failure taxonomy. Four mutually exclusive primary outcomes plus
-secondary flags that may co-occur with any of them.
+The failure taxonomy. Five mutually exclusive outcomes, evaluated in
+order, first match wins.
 
 Positional thresholds are fractions of taper length L, not metres, so the
 taxonomy survives a change of posted speed or lane width.
 
 Every constant marked [ASSUMED] needs a citation or a sensitivity sweep.
-See PROJECT_MEMO.md sections 4.5 and 9.
+See Section 7 of the report.
 """
-
 from __future__ import annotations
 
 from enum import Enum

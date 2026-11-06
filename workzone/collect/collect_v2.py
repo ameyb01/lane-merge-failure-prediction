@@ -3,8 +3,7 @@ workzone/collect/collect_v2.py
 
 Run N episodes of the workzone environment and write them to disk.
 
-Storage is OBJECT-LEVEL tracks, not rendered BEV frames. Rationale
-(PROJECT_MEMO.md section 8):
+Storage is OBJECT-LEVEL tracks, not rendered BEV frames.
 
   - 128x128x3 uint8 at ~400 ticks x 5000 episodes is over 1 TB. Object
     state -- position, velocity, heading, extent per actor per tick -- is
@@ -18,9 +17,11 @@ One .npz per episode plus a manifest.jsonl, so collection is resumable
 and a corrupt episode costs one file rather than the run.
 
 Usage:
-    python workzone/collect/collect_v2.py --episodes 100 --out data/wz_v2
-    python workzone/collect/collect_v2.py --episodes 500 --out data/wz_v2 \
-        --n-vehicles 10 --closed-fraction 0.4
+    python workzone/collect/collect_v2.py --episodes 1700 \
+        --out data/wzf_medium --inflow-rate 800
+
+Collection is resumable: rerunning with the same --out skips episodes
+already in the manifest.
 """
 
 from __future__ import annotations

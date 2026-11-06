@@ -53,13 +53,13 @@ POSTED_SPEED = 9.0
 DT = 0.1
 
 SAMPLE_EVERY = 10          # ticks; 1.0 s at 10 Hz
-CORRIDOR_M = 165.0         # inflow boundary to despawn
+CORRIDOR_M = 165.0         # inflow boundary to despawn. NOT a taper length;
 
 FEATURE_NAMES = [
     "s",                    # own position along the corridor
     "speed",
     "dist_to_end",          # metres of closed lane left
-    "lat_offset",           # lateral offset from the spawn lane centre
+    "lat_offset",           # lateral offset from the vehicle's own start
     "own_lead_gap",
     "own_lead_speed",
     "own_lead_dv",          # closing speed on that vehicle

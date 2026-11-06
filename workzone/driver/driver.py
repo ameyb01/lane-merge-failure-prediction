@@ -17,7 +17,7 @@ Abort        : mechanistic -- triggered when the accepted gap deteriorates.
                predicting a parameter we injected ourselves.
 
 Every constant marked [ASSUMED] needs a citation or a sensitivity sweep.
-See PROJECT_MEMO.md section 9.
+See Section 7 of the report.
 """
 
 from __future__ import annotations
@@ -64,9 +64,9 @@ def sample_driver_params(rng: np.random.Generator,
     """
     Draw one driver.
 
-    RANGES BELOW ARE PLACEHOLDERS. Each needs a source before any result
-    is reported. Candidates: freeway work zone gap-acceptance studies for
-    critical_gap and merge_init_time; Treiber et al. for the IDM block.
+    Three of these ranges have no source: critical_gap, merge_init_time
+    and abort_margin. The IDM block follows Treiber et al. Section 7 of
+    the report sets out which results depend on them.
     """
     return DriverParams(
         # [ASSUMED] freeway merge critical gaps are usually quoted in the
@@ -83,7 +83,7 @@ def sample_driver_params(rng: np.random.Generator,
         # posted speed +/- 15%, a common desired-speed spread
         desired_speed=float(posted_speed * rng.uniform(0.85, 1.15)),
 
-        # IDM ranges, roughly Treiber et al. -- verify before citing
+# IDM ranges, Treiber et al.
         time_headway=float(rng.uniform(1.0, 2.0)),
         min_gap=float(rng.uniform(2.0, 3.0)),
         max_accel=float(rng.uniform(0.8, 2.0)),
@@ -323,10 +323,13 @@ class Driver:
         lag_time  : how long until the vehicle behind in the target lane
                     reaches me, at the rate it is closing on me
 
-        Both use CLOSING speed, not absolute speed. Dividing by absolute
-        speed reports a vehicle 39 m back travelling at nearly my own speed
-        as 2.8 s away when the true figure is 50 s, which made drivers abort
-        merges they had already almost completed.
+        Lead time divides by CLOSING speed. Lag time divides by the
+        following vehicle's own speed, which makes the lag condition
+        stricter than the stated critical gap implies; see Section 7 of
+        the report. Dividing the lead time by absolute speed reported a
+        vehicle 39 m back travelling at nearly my own speed as 2.8 s away
+        when the true figure is 50 s, which made drivers abort merges they
+        had already almost completed.
 
         Both must exceed critical_gap. Time-based, so it stays meaningful
         across speeds.

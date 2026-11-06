@@ -31,9 +31,8 @@ Models, all under identical grouped CV:
   - MLP on all 19, with an inner grouped split for model selection
 
 Usage:
-    python workzone/analysis/evaluate.py
-    python workzone/analysis/evaluate.py --seeds 3 --splits 5    # tighter
-    python workzone/analysis/evaluate.py --skip-mlp              # quick
+    python workzone/analysis/evaluate.py               # as reported
+    python workzone/analysis/evaluate.py --skip-mlp    # quick, no MLP
 """
 
 import argparse
@@ -56,8 +55,10 @@ BINS = [(-30, -20), (-20, -10), (-10, 0), (0, 10),
         (10, 20), (20, 30), (30, 45)]
 HEADLINE = (0, 10)
 
-# Every fold of the earlier run selected the smallest network, so the
-# larger configs were wasted compute. Kept narrow deliberately.
+# Kept narrow deliberately. At three seeds and five splits the inner
+# selection picks 64 units in about half the fits and 32 in a third,
+# and a fixed 32-unit layer matches the selection to within 0.005 in
+# every window.
 GRID: List[Dict] = [
     {"hidden_layer_sizes": (32,), "alpha": 1e-4},
     {"hidden_layer_sizes": (64,), "alpha": 1e-4},
@@ -153,8 +154,8 @@ def cv_mlp(X, y, g, seeds: int, splits: int) -> Tuple[float, float, Dict]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--features", default="data/features/features.npz")
-    ap.add_argument("--seeds", type=int, default=1)
-    ap.add_argument("--splits", type=int, default=3)
+    ap.add_argument("--seeds", type=int, default=3)
+    ap.add_argument("--splits", type=int, default=5)
     ap.add_argument("--skip-mlp", action="store_true")
     ap.add_argument("--per-density", action="store_true")
     args = ap.parse_args()
